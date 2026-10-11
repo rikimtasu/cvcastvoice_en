@@ -12,7 +12,7 @@ from cricodecs import cpk
 t = time.perf_counter
 r = []
 
-ROOT = Path(r"D:\Documents\CVCastingVoice")
+ROOT = C.ROOT
 
 t0 = t()
 a = cpk.load(str(ROOT / "out" / "GameData_en.cpk"))

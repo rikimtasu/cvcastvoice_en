@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Find the true run terminator pattern and count runs correctly."""
 import re, sys
+from pathlib import Path
 from cricodecs import cpk
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-a = cpk.load(r"D:\Documents\CVCastingVoice\_backup\GameData.original.cpk")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cvpatch as C
+a = cpk.load(str(C.ORIG))
 tag = re.compile(rb"<~[0-9A-Za-z_]+>")
 TERM = b"@n\xe2\x8a\xbf@n"     # @n + U+22BF + @n
 ATN = b"@n"

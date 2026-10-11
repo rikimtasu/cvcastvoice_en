@@ -1,9 +1,10 @@
-import json, sys
+import json, os, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 b = sys.argv[1]
-d = json.load(open(rf"D:\Documents\CVCastingVoice\tools\work\batches\batch_{int(b):04d}.json", encoding="utf-8"))
+w = os.environ.get('CVC_CWD') or os.path.dirname(os.path.abspath(__file__)) + os.sep
+d = json.load(open(w + f'batches/batch_{int(b):04d}.json', encoding="utf-8"))
 en = {}
-for p in open(rf"D:\Documents\CVCastingVoice\tools\work\tr\b{int(b):04d}.txt", encoding="utf-8").read().splitlines():
+for p in open(w + f'tr/b{int(b):04d}.txt', encoding="utf-8").read().splitlines():
     if not p.strip():
         continue
     i, e = p.split("|", 1)

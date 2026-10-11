@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cvpatch as C
 from cricodecs import cpk
 
-ORIG = Path(r"D:\Documents\CVCastingVoice\_backup\GameData.original.cpk")
+ORIG = C.ORIG
 TAG_ONLY = re.compile(r"^<~[0-9A-Za-z_]+>$")
 JP = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff\uff01-\uff60\u3005-\u3006]")
 MAXLEN = 400

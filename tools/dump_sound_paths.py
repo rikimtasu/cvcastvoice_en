@@ -5,10 +5,10 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cvpatch as C
 from cricodecs import cpk
 
-SOUND = Path(r"D:\Video_Game\Emulator\RPCS3\games\CV Casting Voice [BLJS10259]"
-             r"\PS3_GAME\USRDIR\DATA\SoundData.cpk")
+SOUND = C.SOUND
 
 
 def main():
@@ -28,7 +28,7 @@ def main():
                 break
     txt = "\n".join(out)
     print(txt)
-    Path(r"D:\Documents\CVCastingVoice\tools\work\sound_paths.txt").write_bytes(
+    (C.WORK / "sound_paths.txt").write_bytes(
         txt.encode("utf-8", "replace"))
 
 

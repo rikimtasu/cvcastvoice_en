@@ -1,6 +1,9 @@
 # --- Game files (copyrighted PS3 assets) — never commit ---
 *.cpk
 _backup/
+# Build output dir (the *.cpk's above are the assets; ignore the whole dir so
+# stray build artifacts / previews never get committed either)
+out/
 
 # --- Extracted corpus & translation data (this is a CODE-ONLY repo) ---
 # Batches and plain-text translation sources

@@ -1,0 +1,10 @@
+# CV Casting Voice English-patch tooling — Python 3.10+
+# Install: python -m pip install -r requirements.txt
+#
+# cricodecs : CPK archive load (read-only) + CRILAYLA/Huffman decode.
+#             The patcher never calls cpk.save(); builds are byte-surgical.
+# numpy / Pillow / opencv-python : .pix texture decode + Track-B UI image edit.
+cricodecs>=1.2.0
+numpy>=2.0
+Pillow>=10.0
+opencv-python>=4.8

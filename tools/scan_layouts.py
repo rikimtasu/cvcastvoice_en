@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cvpatch as C
 from cricodecs import cpk
 
-ORIG = Path(r"D:\Documents\CVCastingVoice\_backup\GameData.original.cpk")
+ORIG = C.ORIG
 
 SEP_BLOCK = (b"\x0a\xe2\x8a\xbf@n", b"\x0a\xe2\x8a\xa5@n")
 ATN = b"@n"

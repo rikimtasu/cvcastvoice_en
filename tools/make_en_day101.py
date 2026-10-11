@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cvpatch as C
 from cricodecs import cpk
 
-ORIG = Path(r"D:\Documents\CVCastingVoice\_backup\GameData.original.cpk")
+ORIG = C.ORIG
 FILES = ["DATA/srt_ev/b_flow/day101.srt",
          "DATA/srt_ev/b_flow/day111.srt",
          "DATA/srt_ev/pl266/b_flow/day101.srt",

@@ -11,7 +11,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cvpatch as C
 
-ORIG = Path(r"D:\Documents\CVCastingVoice\_backup\GameData.original.cpk")
+ORIG = C.ORIG
 a = cpk.load(str(ORIG))
 FILES = ["DATA/srt_ev/b_flow/day101.srt",
          "DATA/srt_ev/b_flow/day111.srt",

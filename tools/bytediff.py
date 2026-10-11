@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cvpatch as C
 
-ORIG = Path(r"D:\Documents\CVCastingVoice\_backup\GameData.original.cpk")
+ORIG = C.ORIG
 ROW0, STRIDE = 0x84F, 28
 COL_FILE, COL_EXTR, COL_PREV = 4, 5, 0
 a = ORIG.read_bytes()

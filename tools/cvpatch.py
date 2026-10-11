@@ -25,17 +25,42 @@ USAGE
   cvpatch.py build --overlay O.json --out P   (dry-run with --dry)
   cvpatch.py verify --file P [--expect E.json]
   cvpatch.py restore
+
+PATHS (portable: repo works from any checkout location)
+  All game paths default to repo-relative locations and can be overridden
+  with environment variables (or --orig / --install flags on each command):
+    CVC_ORIG     pristine GameData.cpk
+                 (default: <repo>/_backup/GameData.original.cpk)
+    CVC_SOUND    pristine SoundData.cpk
+                 (default: <repo>/_backup/SoundData.cpk)
+    CVC_INSTALL  deployed GameData.cpk inside the game folder
+                 (no default; required only by `restore`)
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
-ORIG = Path(r"D:\Documents\CVCastingVoice\_backup\GameData.original.cpk")
-INSTALL = Path(r"D:\Video_Game\Emulator\RPCS3\games\CV Casting Voice [BLJS10259]"
-               r"\PS3_GAME\USRDIR\DATA\GameData.cpk")
+TOOLS = Path(__file__).resolve().parent
+ROOT = TOOLS.parent
+
+WORK = TOOLS / "work"
+WORK.mkdir(parents=True, exist_ok=True)
+
+
+def _env_path(name: str, default: Path | None) -> Path | None:
+    val = os.environ.get(name)
+    if val:
+        return Path(val).expanduser()
+    return default
+
+
+ORIG = _env_path("CVC_ORIG", ROOT / "_backup" / "GameData.original.cpk")
+SOUND = _env_path("CVC_SOUND", ROOT / "_backup" / "SoundData.cpk")
+INSTALL = _env_path("CVC_INSTALL", None)
 
 # ---- CPK layout constants (all independently verified) ----
 ROW0 = 0x84F            # first TOC row
@@ -49,10 +74,6 @@ INFO_CONTENT_OFF = 0xE7      # u64be
 INFO_DATA_SIZE = 0xEF        # u64be
 INFO_ETOC_OFF = 0x107        # u64be
 INFO_ETOC_SIZE = 0x10F       # u64be
-
-TOOLS = Path(__file__).resolve().parent
-WORK = TOOLS / "work"
-WORK.mkdir(parents=True, exist_ok=True)
 
 ATN = b"@n"
 CRLF = b"\x0d\x0a"
@@ -540,31 +561,74 @@ def cmd_verify(args):
     return 0 if (bad == 0 and diff == 0) else 1
 
 
+def resolve_orig(args) -> Path:
+    """ORIG with a per-run --orig override (falls back to CVC_ORIG env / default)."""
+    global ORIG
+    if getattr(args, "orig", None):
+        ORIG = Path(args.orig).expanduser()
+    if ORIG is None or not ORIG.exists():
+        sys.exit(
+            f"pristine GameData.cpk not found at {ORIG}.\n"
+            "Provide it with --orig PATH or the CVC_ORIG environment variable "
+            "(default: <repo>/_backup/GameData.original.cpk).")
+    return ORIG
+
+
+def resolve_install(args) -> Path:
+    """INSTALL with a per-run --install override (falls back to CVC_INSTALL env)."""
+    global INSTALL
+    if getattr(args, "install", None):
+        INSTALL = Path(args.install).expanduser()
+    if INSTALL is None:
+        sys.exit(
+            "no deployed GameData.cpk configured. Provide it with --install PATH "
+            "or the CVC_INSTALL environment variable "
+            "(e.g. <RPCS3 games>/CV Casting Voice [BLJS10259]/"
+            "PS3_GAME/USRDIR/DATA/GameData.cpk).")
+    return INSTALL
+
+
 def cmd_restore(args):
     import shutil
-    shutil.copyfile(ORIG, INSTALL)
-    log(f"restored {INSTALL} from {ORIG} "
-        f"({INSTALL.stat().st_size} bytes)")
+    src = resolve_orig(args)
+    dest = resolve_install(args)
+    shutil.copyfile(src, dest)
+    log(f"restored {dest} from {src} "
+        f"({dest.stat().st_size} bytes)")
     return 0
+
+
+def _add_path_flags(p):
+    p.add_argument("--orig", default=None,
+                   help="pristine GameData.cpk (overrides CVC_ORIG; "
+                        "default: <repo>/_backup/GameData.original.cpk)")
+    return p
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("scan")
+    _add_path_flags(sub.add_parser("scan"))
     bg = sub.add_parser("build")
     bg.add_argument("--overlay", required=True)
     bg.add_argument("--out", required=True)
     bg.add_argument("--dry", action="store_true")
     bg.add_argument("--force", action="store_true")
+    _add_path_flags(bg)
     vg = sub.add_parser("verify")
     vg.add_argument("--file", required=True)
     vg.add_argument("--expect")
     vg.add_argument("--deep", action="store_true",
                     help="also decompress-compare every file (slow)")
-    sub.add_parser("restore")
+    _add_path_flags(vg)
+    rg = sub.add_parser("restore")
+    _add_path_flags(rg)
+    rg.add_argument("--install", default=None,
+                    help="deployed GameData.cpk to overwrite (overrides CVC_INSTALL)")
     args = ap.parse_args()
+    if args.cmd is not None:
+        resolve_orig(args)   # honor --orig / CVC_ORIG before any command runs
     return {"scan": cmd_scan, "build": cmd_build,
             "verify": cmd_verify, "restore": cmd_restore}[args.cmd](args)
 
