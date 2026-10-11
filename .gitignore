@@ -1,0 +1,31 @@
+# --- Game files (copyrighted PS3 assets) — never commit ---
+*.cpk
+_backup/
+
+# --- Extracted corpus & translation data (this is a CODE-ONLY repo) ---
+# Batches and plain-text translation sources
+tools/work/batches/
+tools/work/tr/
+# All translation / build-state JSON produced from game bytes
+tools/work/*.json
+# Scan / probe / dump text outputs
+tools/work/*.txt
+# Per-batch generators hold the English translation corpus inline
+tools/work/gen_tr_b*.py
+# Game-derived reference (JP names + readings mined from game bytes)
+tools/work/glossary.json
+tools/work/glossary.md
+# Byte-patch overlays (data, not code)
+tools/ov_ctrl.json
+tools/ov_en_day101.json
+
+# --- Python bytecode / caches ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- OS / editor cruft ---
+Thumbs.db
+.DS_Store
+*.swp
+
