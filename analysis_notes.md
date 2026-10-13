@@ -475,6 +475,200 @@ map** gated by each record's `+0x10` flag (§11.2). To name *which* record ->
 into the record array, then the k-th cleared record = k-th scenario. That is a
 pure table read (no gameplay). Fallback remains the controlled single-clear diff.
 
+## 12. Key list decoded + serializer engine identified (session 6) — COMPLETE
+
+Tooling: `clean_dump.py`, `final_dump.py`, `find_keylist.py` (output
+`_keys.txt`, `_final.txt`, `_keylist.txt` — UTF-8 so JP renders).
+
+### 12.1 The serializer engine is CRI Middleware (ADX) — type table @0x30def8
+The `switch (type_id)` in `0xef4e4` (§11.1) dispatches on CRI serialization
+types. The ordered type-name array at **0x30def8** (and CRI variant at 0x30e200):
+```
+Uint8 Sint8 Uint16 Sint16 Uint32 Sint32 Uint64 Sint64
+Float32 Float64 String VLData CBNData
+```
+So on disk: each value is a tagged (type,data) pair. `0xff` bool-true / `01 <n>`
+int (§10.4/§11.2) are the CRI `Uint8`/`Sint8` encodings of small values; `String`
+values are length-prefixed. This is a **generic CRI key→value serializer**, not a
+hand-rolled bitfield — which is exactly why flat-offset searches (§8.6) failed.
+
+### 12.2 Concrete scenario / character KEYS (the hashmap key list)
+Entries are keyed by **numeric IDs formatted into fixed asset names** (not by the
+category strings themselves). The key builders found inline:
+
+| entity | key format | example path |
+|--------|-----------|--------------|
+| scenario (work) | `sakuhin%03d` | `/DATA/sakuhin/sakuhin000.pac` |
+| character | `ca%03d` (+ `ca%03d_2`) | char asset id |
+| voice cast | `vic%03d` | `/DATA/vaIcon/ctva%03d.pix`, `vic%03d/M%03d.acb` |
+| dialogue | `D%03d_serif` | `/DATA/daihon/D%03d_serif.info` |
+| album bg | `alb_%03d` | `/DATA/spr_ab/alb_%03d.spr` |
+
+So **scenario #k <-> `sakuhin%03d` with k**, and **character #c <-> `ca%03d`**.
+The 名鑑's per-actor record (`cha, n_nml…n_ter, va, profile%d, secret%d,
+category, voice, sankaku, chaback, ca%03d` @0x23da80) is the character entry;
+its trust is aggregated from all `sakuhin` (scenario) records whose cast list
+includes that `ca%03d` and whose `+0x10` cleared-flag is set (0xff).
+
+### 12.3 Trust-reward table @0x2e1f14 (名鑑 UI)
+```
+信頼度１でオープン … 信頼度１０でオープン   (trust 1..10 each unlock an item)
+Ａ型 Ｂ型 Ｏ型 ＡＢ型 ？？型                 (blood-type profile field)
+```
+Confirms 名鑑 trust is a **1..10 ladder**; each actor's `va`/profile record shows
+the trust level and unlocked reward.
+
+### 12.4 FINAL mapping (closes §11.4)
+```
+GAMEDATA file
+ └─ CRI keyed tree (Uint8/Int/String TLVs, double-buffered @0x800)
+     ├─ scenario : { sakuhin000..sakuhin%03d -> record{+0x10=cleared?} }
+     ├─ character: { ca000..ca%03d          -> record{n_*,va,trust 1..10} }
+     ├─ unlock / skil / cas_top / obi*      : flags & progress
+     └─ cleared-counter @0x143 (aggregate)
+```
+Per-actor trust = count of cleared `sakuhin` records referencing that `ca%03d`,
+mapped onto the 1..10 ladder of §12.3. This is now fully localized statically.
+The only remaining unknown is the exact **cast list inside each scenario record**
+(i.e. which `ca%03d` a given `sakuhin%03d` credits) — resolvable either by
+reading the scenario PACs (`sakuhin%03d.pac`) or one controlled single-clear diff
+keyed to a known actor. No blind edits.
+
+## 13. Serializer core, statically traced (EBOOT disassembly)
+
+The static trace of the save (de)serializer is now complete. Key results:
+
+- **Serializer dispatcher @0xef4e4.** A large type-switch on a type id (r30,
+  values 0x00,0x01,0x37-0xa3…). Each case writes a type tag byte into the output
+  stream (0x00=null/false, 0x01=int, 0xff=bool-true) and dispatches to a helper.
+  16 explicit cases were extracted; the value range implies ~100 serializable
+  types. This is the **type-tag table** for the on-disk TLV stream.
+- **Container evidence (Dinkumware STL).** Helper 0xd8a44 is `std::vector::at`
+  (`sldi r3,r5,2; lwzx` with a bounds check); 0xf51ac tests a size/capacity bit
+  at struct offset +0x60. The save object is built on `std::vector` + `std::map`.
+  => per-actor state is a **keyed map**, not a fixed-offset array. This is why
+  every fixed-offset/bitfield scan of the raw save came up empty.
+- **Save I/O dispatcher @0x4b8fc** (case handler 0x4c5c0-0x4c718): per-key
+  `lookup(0x1268b8) -> get(0x29a24) -> store(0x29674)`. Reached via C++ virtual
+  call (loads vtable ptr, `mtctr/bctrl`), so no direct `bl` caller exists.
+- **Save-slot descriptor** referenced at 0x4c538-0x4c718 via `lis r4,0x24;
+  addic r4,r4,-0x2a14/-0x2a24/-0x2a2c/-0x2a3c` -> inline strings
+  GAMEDATA/OPTION/ICON0.PNG/PIC1.PNG in the `NPJB00558-GAMEDATA-` save folder.
+
+### 13.1 Save schema vocabulary (confirmed keys)
+
+Per-actor 名鑑 record keys (all cp932 strings in the .rodata key list):
+- `f%03d_nml`            — per-character name (indexed record, ca%03d family)
+- `ca%03d` / `ca%03d_2`  — character asset id
+- `cha` / `chara` / `character` — character map
+- `rank`, `prank`, `rankup`, `rankon` — **trust/rank fields (per actor)**
+- `scenario`, `obiscenario`, `sakuhin%03d` — scenario-completion map
+- `obi*` (`obichara`,`obicast`,`obiunlock`,`obiappre`…) — progress/seen flags
+- `unlock`, `skil`, `cas_top` — progression
+
+### 13.2 Trust model (final)
+
+- **Trust-reward table @0x2e1f14 (15 ptrs):** 信頼度①..信頼度⑩
+  ("trust level 1..10"), each granting an オーブ (Orb) reward, + blood types
+  A型/B型/O型/AB型/??型. So **trust is an integer 1..10 per actor.**
+- Trust is **derived**: count of cleared `sakuhin` (scenario) records that
+  reference the actor's `ca%03d`, clamped to the 1..10 ladder. Stored back as
+  the per-actor `rank`/`prank` map value by the serializer.
+
+### 13.3 What this means for the trust meter
+
+The 名鑑 trust meter reads the per-actor `rank`/`prank` integer from the keyed
+`character`/`f%03d_*` map — NOT a raw byte at a fixed offset. To raise one
+actor's trust you must (a) set that actor's cleared-scenario sub-list, and
+(b) let the game recompute `rank`. Blind byte edits at 0x1117/0x117b (my earlier
+failed attempt) hit unrelated big-endian stats and cannot move trust.
+
+**Remaining single unknown:** which `ca%03d` each `sakuhin%03d` scenario credits.
+That cast list lives in the scenario PACs (`/DATA/sakuhin/sakuhin%03d.pac`) or is
+observable from one controlled single-clear diff. With it, per-actor trust can be
+set deterministically by writing the correct keyed map — no guessing.
+
+## 14. Scenario ↔ Character ↔ VA triangle — FULLY DECODED (GameData.cpk)
+
+All three sides extracted statically from `GameData.cpk` / `SoundData.cpk`
+(loader: `cricodecs.cpk` via `cvpatch.C.ORIG`).
+
+### 14.1 Scenario → character (48 sakuhin PACs)
+
+Each `DATA/sakuhin/sakuhinNNN.pac` (48 files, NNN=001..054 with gaps) embeds its
+cast twice (`OBNT` object block + per-object `caNNNn` entries) as `ca%03d`
+character ids. Complete map extracted by `tools/work/sakuhin_cast.py`
+(output `tools/work/_sakuhin_cast.txt`). Examples:
+
+| sakuhin | cast |
+|---|---|
+| 001 | ca000–ca008 (9) |
+| 002 | ca009–ca017, ca221 (10) |
+| 003 | ca018–ca023, ca217, ca218, ca222 (9) |
+| 039/041–045/051/054 | single ca199/ca202/ca203/ca204/ca205/ca206/ca212/ca215 |
+
+Character-id space: **ca000..ca223** (224; recurring `ca217/218/221/222/223`
+appear in many scenes = narrator/system cast).
+
+### 14.2 VA roster (seiyubase.pac) — 50 records, authoritative index
+
+Header index: 50 entries `{u32 size, u32 offset}` at 32-byte stride. Per record:
+`u16 id`, sorted **u16 ca%03d character list**, name, kana, agency, bio.
+Binding verified **50/50: `id == 265 + idx`** (`tools/work/roster_final.py`
+→ `tools/work/_roster3.txt`). Same ids as `vaIcon/ctva%03d.pix` and voice dirs
+`vic%03d` — one consistent VA id space **265..314**.
+
+- **八尾伊月 = idx 49 = vic314 / ctva314**, 38 characters
+  (ca011, ca016, ca018–022, ca038–043, ca060–066, ca096/097, ca160/162/163,
+  ca170–172, ca190/192–195, ca201–204, ca212, ca215, ca217, ca218).
+- idx 46 = 月宮 桃香 (only ca130; skipped by name-heuristic earlier — found only
+  via the header index, which is why the count reconciled 49 → 50).
+- DLC VAs = ids **276, 287, 295, 297, 305** (gaps in base voice dirs; exactly
+  the `DLC_S276/S287/S295/S297/S305` manifest entries).
+
+Cross-check with ground truth: her bio (*"デビューしたての新人声優…まだメインは
+少ない"*) matches trust 4 / 台本 20% (fewest mains among the roster).
+
+### 14.3 VA → scenario (SoundData.cpk voice paths, authoritative)
+
+Path grammar `DATA/sound/Plip/vicNNN/DMMM_LLL_NNN.plip` =
+`vic<VA>/D<scenario>_<line>_<VA>`. Matrix built by `tools/work/voice_cov.py`
+(`tools/work/_voice_cov.txt`): **45 base VAs × 123 scenarios (D000..D128,
+6 ids unused: 98/118/120/121/122/125)**, path-embedded id == dir id (0
+mismatches). Per-scenario VA counts also emitted (D099/D124 = 42–44 VAs =
+all-cast events).
+
+八尾伊月/vic314 speaks in **34 scenarios**: 007 009 011 012–017 030–035
+042–046 068–070 099 100 103 109 110 113–116 124 127.
+
+### 14.4 Trust storage — negative result (matters)
+
+Scan of the live save for any flat 50-element array (byte/u16 LE/BE, values
+0..10 with `[49]==4`, and 0..100 with `[49]==20`) found **nothing**
+(`tools/work/trust_scan.py`). Combined with §13 (Dinkumware `std::map`
+serializer): **trust is not a raw offset array** — it is either a keyed/serialized
+record or *derived at load* from completion state. So a "set byte X = 10" edit
+cannot work for trust (consistent with the failed 0x1117/0x117b attempt).
+
+### 14.5 What is still open, and the cheapest way to close it
+
+Open: which save bytes represent (a) per-scenario cleared flags and (b) any
+per-VA counters (信頼度 might be *earned by casting that VA*, not by scenario
+clear — the trust→Orb reward table §13.2 hints at play-session progression).
+The 48×50 cast matrix now makes any diff **computable**: given a known
+cleared-set, expected trust per VA = f(her cleared scenes).
+
+Cheapest decisive experiment (either):
+1. **Cast 八尾伊月 once**, snapshot before/after → the byte(s) that move for
+   *her specifically* = trust counter (her id = 314 / idx 49, so attribution
+   is unambiguous); or
+2. Send **2–3 more 名鑑 entries with trust values** (e.g. idx 0 内山紗彩,
+   idx 5 道場崇) → correlate values against the cast matrix to identify the
+   array by ordering.
+
+Artifacts: `_sakuhin_cast.txt`, `_roster3.txt`, `_voice_cov.txt`,
+`sakuhin_cast.json` (all under `tools/work/`, git-ignored scratch).
+
 
 
 
