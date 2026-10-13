@@ -1,4 +1,4 @@
-# CV Casting Voice — English patch: format notes & status
+﻿# CV Casting Voice — English patch: format notes & status
 
 Game: *CV Casting Voice* [BLJS10259] (PS3), Japanese.
 Target: English text patch incl. DLC, plus a VWF decision.
@@ -128,34 +128,21 @@ installed copy.
 
 ---
 
-## 7. UPDATE (2026-10-12) -- UI text split into TWO sources
+## 7. UI text: what's baked pixels vs. what's a data string (VERIFIED, 2026-10-12)
 
 Earlier assumption "UI/menu text is baked pixels (323 `.pix`)" was too broad.
 The remaining Japanese UI is in fact split into two independent sources.
 
 ### 7a. Name box + CV credit = TEXT (not pixels) -- SOLVED (Track A)
 
-The on-screen speaker name and the CV credit are NOT baked. They are text in
-two `PACK`-container files:
+The on-screen speaker name and the CV credit are NOT baked. The game renders
+them with its runtime font, so they are ordinary text we can swap as bytes.
+They live in two compressed `PACK`-magic name DBs:
 
 * `DATA/daihon/daihonbase.pac`  (stored 7160 -> extract 23311, COMPRESSED)
-  -- speaker-name / chapter-title string table.
+  -- speaker-name box, scene titles, bios.
 * `DATA/daihon/seiyubase.pac`   (stored 51612 -> extract 114501, COMPRESSED)
   -- CV (voice-actor) credit table; each record = kanji name + kana reading.
-
-
----
-
-## 7. UI text: what's baked pixels vs. what's a data string (VERIFIED)
-
-The on-screen UI splits into two sources:
-
-**A. Name / title / CV-credit strings — data, now translated (Track A).**
-These live in two compressed `PACK`-magic name DBs and are rendered by the game's
-font at runtime, so they are ordinary text we can swap:
-
-* `DATA/daihon/daihonbase.pac` — speaker-name box + scene titles + bios.
-* `DATA/daihon/seiyubase.pac` — VA credit names (name + a kana reading before each).
 
 Verified layout: `PACK` magic, u32 count, then concatenated **NUL-terminated
 UTF-8** strings. No absolute offset points at them (0 hits for the string
@@ -170,21 +157,6 @@ Pipeline: `tools\pac_analyze.py` (structure -> `work\pac_names_detail.json`) ->
 `out\GameData_en.cpk`, verifies). Deep check: `tools\pac_verify_deep.py` proves
 every changed byte is inside a name slot (**661 changed bytes, 0 outside** in
 daihonbase; 50 CV names in seiyubase). 111 UI slots translated, 0 over budget.
-
-**B. Bottom control buttons — スキップ / オート / ウィンドウ / 早送り — baked pixels.**
-Text-search for these returns **zero** hits in any `.srt`/`.pac`/`.info`, so they
-are rasterised into the sprite sheets, not drawn from the font.
-
-**C. `.pix` sprite sheets are NOT raw DDS/BC3** (corrects the earlier note). They
-are a custom chunked CRI container: `FPIX` root -> `DPIX` -> `XPIX` (323 files),
-with a u32 LE total-size after `FPIX`. Paired with `.spr` (`SPRF`/`OBJT`) layout
-files and a `.fon` (`FFON`) runtime font. numpy / PIL / cv2 are all available in
-the interpreter, so a decode->OCR/inpaint->re-render->re-encode path is feasible —
-but it still requires cracking the `XPIX` texture header (w/h/format/payload
-offset), which is the remaining unknown for Track B.
-
-Track A is built into the current `out\GameData_en.cpk`. Track B (pixel buttons)
-is not yet started.
 
 Structure: `PACK` magic + u32LE, then concatenated NUL-terminated UTF-8
 strings. No absolute offset points at the name strings (verified: 0 LE-u32
@@ -224,3 +196,286 @@ exact sub-image + bytes for each button before OCR -> inpaint -> re-render ->
 swap. `DATA/font/*.fon` (`FFON`) and the paired `.spr` (`SPRF`/`OBJT`) hold the
 font + sprite placement and are the likely key to mapping a baked glyph region
 back to its on-screen button.
+
+---
+
+## 8. GAMEDATA save structure (NPJB00558) — 名鑑 trust/scripts mapping
+
+File: `dev_hdd0/home/00000001/savedata/NPJB00558-GAMEDATA-/GAMEDATA`, **19904 B**.
+Snapshots: `tools/work/snaps/{T0,T1,T2}/GAMEDATA.bin` (real scenario-clear diffs).
+
+### 8.1 What is PROVEN (from live-load behaviour)
+
+* **No checksum anywhere.** A hand-edited save loads and is *displayed as-is* —
+  the game does NOT rewrite or reject it (`fab->live` diff = 0 changed bytes
+  after booting the 名鑑). So byte edits are safe from rejection; the risk is
+  only "the displayed number won't be what you wanted".
+* **Most of the file is byte-mirrored at +0x2a8** (90.9% of bytes match their
+  +0x2a8 partner; the 0x1100 stats block is mirrored *exactly*). Any per-field
+  edit must be applied to BOTH the primary and the +0x2a8 copy.
+* Scalar values are **big-endian u32** at 4-byte-aligned bases.
+
+### 8.2 CORRECTION — the earlier "trust meter" model was WRONG
+
+`tools/save_fabricate.py` originally set `0x1117` and `0x117b` to `0xFF` and
+called them "trust meters". **They are not.** They are the **low byte of two
+big-endian u32 stats** at base `0x1114` (value 60->70) and `0x1178` (0->120).
+Setting the low byte to 0xFF just made those two unrelated stats = 255. Result:
+八尾 伊月 (a 新人/newcomer) still showed 信頼度 **4/10** and 演じられる台本 **20%**
+after install. Do not trust those two offsets.
+
+### 8.3 名鑑 trust is PER-ACTOR and (almost certainly) DERIVED
+
+Screenshot proof: with the cleared counter forced to **125/125**, 八尾 伊月 still
+read 4/10 stars and 20% scripts. Therefore:
+
+* The global cleared counter `0x0140` (u32 BE, mirror `0x0320`) does **NOT**
+  drive 名鑑 trust. Total scenarios = 125 (`0x0148`, constant). Counter went
+  99 -> 117 across T0->T2 (i.e. +18), matching ~18 cleared in that span.
+* 信頼度 (10 stars) and 演じられる台本 (a %) are computed **per actor** from how
+  many of *that actor's* scenarios are cleared. 八尾 伊月 is a newcomer with few
+  appearances, so she sits at 20% / 4 stars regardless of the global counter.
+
+### 8.4 Structures located so far
+
+* **Record bank** `0x00c0` (mirror `0x02a0`): 32-byte records
+  `[u32 BE count][u32 BE done][28B pad]`. done-field -> `0xFFFFFFFF` on clear.
+  Only ~3-4 records are populated here; NOT the full 125-scenario store.
+* **0x1100-0x11d0**: sparse global-stats blob (money/fans/etc.), values at
+  irregular spacing, mirrored exactly at +0x2a8. NOT per-actor.
+* **0x3dc0-0x3fc0**: 512-byte block, 506/512 bytes = 0xFF (a large all-set
+  bitfield / flags region). Constant across tags except a couple bytes.
+* **0x0190-0x02a0**: mixed small-value region (part of the same stats area).
+
+### 8.5 What is STILL UNKNOWN / next step
+
+The **125-entry per-scenario completion store** (and the actor->scenario mapping)
+has NOT been isolated yet — a popcount scan for a +18-growing, ~125-capacity
+bitfield found no single clean window. To map 名鑑 trust we need a **controlled
+single-actor experiment**: snapshot, clear exactly ONE scenario that features a
+known 名鑑 actor, snapshot again, diff — the bytes that move are that actor's
+completion/trust drivers. Tools: `tools/save_castdiff.py snapshot --tag X` /
+`diff --a X --b Y`; analysis helpers in `tools/work/{analyze_trust,probe_offsets,
+scan_structure,map_nonzero,verify_struct,decode_completion,find_scenario_flags,
+diff_live}.py`.
+
+### 8.6 DEFINITIVE NEGATIVE RESULT (static, no gameplay) — 2026-10-13
+
+Exhausted the "reconstruct from 3 snapshots" idea. All three independent methods
+agree that 名鑑 trust/scripts% **cannot be rebuilt from GAMEDATA bytes** with the
+data on hand:
+
+1. **Ground-truth search** (`ground_truth_search.py`): live save shows 八尾 伊月
+   = trust 4, scripts 20%. Literal byte `4` occurs 13x, `20` (0x14) occurs 1x —
+   both as scattered noise. **No regular-stride per-actor array exists** (best
+   stride hit 66/4975 = random). File is mostly zeros + sparse records.
+2. **Byte/bitfield hunt** (`find_by_count.py`, `bitfield_hunt.py`): NO window
+   anywhere (any byte offset, any bit offset, MSB or LSB order) has a 125-bit
+   popcount matching the cleared counter 99(T0)/117(T2). The only +big cluster
+   is the 0x00c0 record bank (sliding-window artifact of done-fields -> 0xFF).
+3. **EBOOT is encrypted**: `EBOOT.BIN` is an SCE SELF (key_rev 0x1c, LV0), the
+   ELF at +0x90 is PPC64 but the code segments are high-entropy/encrypted (entry
+   `0x2d8ba0` disassembles to garbage). No readable strings. So the save-write
+   routine can't be inspected without SELF decryption (erk/riv keys, per
+   PkgLens). RPCS3 cache holds only PPU shader/program fragments, not a
+   decrypted EBOOT.
+
+**Conclusion:** trust is per-actor and derived from a completion representation
+we can't decode from 3 non-clean snapshots, and the binary that defines it is
+encrypted. Two viable paths remain, both out of current scope:
+* **Controlled experiment** (fastest, reliable): 1 clean scenario clear + diff.
+* **SELF decrypt + PPC64 disasm + trace save-write** (slow, uncertain).
+
+Do NOT re-attempt a blind byte edit — the previous "trust meter" model was wrong
+and cost a full install/restore cycle.
+
+---
+
+## 9. Decrypted EBOOT (RPCS3 dump) — save system located
+
+`tools/work/EBOOT.elf` (decrypted EBOOT supplied by user). Capstone PPC64 with
+`skipdata` decodes **567,749** instructions (was 5,071 without it). Identity
+map: file offset == vaddr for the exec segment (off 0x230, vaddr 0x10230,
+size 0x22a714).
+
+### 9.1 Save I/O routine FOUND (string XREF, raw-word verified)
+
+The filename/save-slot strings live in the blob 0x242900–0x242c00:
+`NPJB00558-GAMEDATA-`, `GAMEDATA`, `OPTION`, `CASTDATA.DAT`, `ICON0.PNG`.
+The **save schema key names** live at 0x23D560–0x23D820 and are the real
+vocabulary of the save model:
+
+```
+obicas_top  obiscenario  obiappre  obiappre2  obichara  obicast  obiunlock
+cas_top  scenario  character  unlock  skil
+rookie  young  mainstay  veteran          (rank ladder)
+```
+
+None appear as literal text in the save file — the save is a **serialized keyed
+tree**, not string-keyed on disk. The serializer lives in the big dispatcher at
+**0x4b8fc** (switch on category r4 = 0..6) whose case-5/6 handler at
+**0x4c5c0–0x4c718** writes each key with the pattern:
+
+```
+key   = <key string>            ; lis r4,0x24 ; addic r4,r4,-0x2aXX
+node  = 0x1268b8(key, 0)        ; strbuf append key name (string builder)
+val   = 0x29a24(node, ctr)      ; value getter
+ctr   = 0x29674(ctr, r26+off, val) ; store into in-memory struct r26+0x1c0+4*i
+```
+
+`0x1268b8` = string-buffer writer (appends key to buffer at r30+0x108, tracks
+len at r30+0x110). Key→struct-slot map (r26+offset):
+`obiunlock`→0x1c0, `cas_top`→0x1c4, `scenario`→0x1c8, `character`→0x1cc,
+`unlock`→0x1d0, `skil`→0x1d4.
+
+**Key structural insight:** the save is a nested key→value map (like a JSON
+tree) built at runtime and flattened to file by a generic map serializer. The
+`scenario`/`character`/`unlock` keys are the top-level categories the 名鑑 reads.
+
+### 9.2 Structural map from the REAL trial diffs (BASE→T0→T1→T2)
+
+Cleared counter went 99(T0)→117(T2) across real in-game clears. Full byte-diff
+(75 changed offsets) shows the file is **double-buffered / mirrored**:
+
+* block `0x1100–0x1200` mirrors to `0x13a8–0x14a8` (**+0x2a8**)
+* block `0x2000–0x2a00` mirrors to `0x2800–0x3200` (**+0x800**)
+
+Field semantics decoded from transitions:
+
+| offset | behavior | meaning |
+|--------|----------|---------|
+| `0x0063` | 5→6→7 (BASE=7) | a small index/counter |
+| `0x0143` | 0x63(99)→0x75(117) | **cleared-scenario counter** (mirror `0x0323`) |
+| `0x11c7` | 0x9e→0xc2→0xe0 (+0x24 each) | **cumulative clear count** (mirror `0x146f`) |
+| `0x1187` | 0xdc→0x96→0xdc | toggled stat (mirror `0x142f`) |
+| `0x1117` | 0x46→0x3c→0x46 | low byte of BE u32 stat (mirror `0x13bf`) |
+| `0x117b` | 0x78→0x00→0x78 | low byte of BE u32 stat (mirror `0x1423`) |
+| `0x2123` | 0x20→0x00→0x20 | **flag bit** (mirror `0x2923`, +0x800) |
+| `0x21bf` | 0xfe→0xfa→0xfe | flag byte (mirror `0x29bf`) |
+| `0x3f00` | `01 0c ff ff…` | **bitfield of cleared markers** (0xff runs) |
+
+The `0x3f00` region (long 0xff runs after a `01 0c` header) and the `0x2123`
+flag bit are the strongest candidates for **per-scenario completion flags** that
+the 名鑑 aggregates into per-actor trust. Still need one more clean single-clear
+diff keyed to a *known* 名鑑 actor to pin which flag → which actor's trust.
+
+### 9.3 Tooling added
+
+`tools/work/`: `raw_xref.py` (raw-encoding XREF), `hand_decode.py` (raw word
+decode), `raw_serializer.py` (raw-word key-region XREF — capstone-independent),
+`find_serializer.py`, `dispatch.py`, `container.py`, `trial_diff.py`,
+`struct_analysis.py`, `bitfield_map.py`, `record_layout.py`, `save_keys.py`.
+
+
+## 10. Static decode from the decrypted EBOOT (session 4)
+
+**Tooling:** `tools/work/{ppc_disasm,elf_strings,raw_xref,hand_decode,ctx_2a14,
+save_xref_verified,save_keys,imports,tail_bits,tail_change,tail_records,
+decode_records,sum_groups,mirror_check,find_block,tag_emit}.py`.
+
+### 10.1 Capstone fix (was silently wrong)
+The earlier sweep only decoded ~5k instructions. Root cause: data bytes in the
+`.text` break capstone's linear sweep. Fix in `ppc_disasm.py`: build the
+disassembler with `skipdata=True` so `.byte` pads are tolerated.
+Result: **567,749 instructions** decoded. With skipdata on, capstone's
+`is_...`/register checks became unreliable, so all XREF now uses **raw 4-byte
+word decoding** (`opcode<<26`, rt/ra/imm16) with a per-register absolute base
+tracked from `lis`/`addis(ra=0)` and sign-correct `addic/addi` completions.
+
+### 10.2 Addressing mode (resolved)
+No `PT_DYNAMIC`: this is a statically-linked PS3 EBOOT (cellFs*/cellSave* are internal,
+not GOT imports), so import-XREF (`imports.py`) is a dead end. **Global/string
+addressing is ABSOLUTE**: `lis rX, hi` ; `addic rX, rX, lo16_signed`. Confirmed
+against raw words (e.g. `3c800024` / `3084d5c4`).
+
+### 10.3 Save schema vocabulary (found as inline strings @0x23D560)
+`scenario`, `character`, `unlock`, `skil`, `cas_top`, `cast_top`, and the rank
+ladder `rookie / young / mainstay / veteran`. The save-file header block
+(`NPJB00558-GAMEDATA-` dir; `GAMEDATA`/`OPTION`/`ICON0.PNG`/`PIC1.PNG`) is a
+`char*` descriptor struct; the dispatcher writes each key via
+`lookup(0x1268b8) -> get(0x29a24) -> store(0x29674)`.
+
+### 10.4 On-disk format (definitive)
+The file is **variable-length serialized TLV, NOT a fixed bitfield**:
+- `0xff` = bool-true element (a cleared scenario).
+- `01 <count>` = integer record (group header + count).
+- Layout is **double-buffered**: two complete copies at stride **0x800**
+  (e.g. `0x2123`->`0x2923`, `0x21b9`->`0x29bf`), with header sub-mirrors at
+  +0x180 (`0x143`->`0x323`) and a wider progress block mirrored at ~+0x2a8
+  (`0x1117`->`0x13bf`, `0x117b`->`0x1423`, `0x11c7`->`0x146f`).
+
+Verified group records (0x20 stride): `[0xc2]=14, [0xe2]=14, [0x102]=205,
+[0x2a2]=14, [0x2c2]=14, [0x2e2]=205` at BASE; the `14`s drop to `13` and the
+`205`s to `159` after the trial clears. The cleared counter `0x143`
+(117->99) is an **independent aggregate**, not the sum of these group counts
+(which are cumulative totals that also move).
+
+### 10.5 Why per-actor trust is not a flat offset
+Because the tail is serialized TLV with `0xff`-as-true and `01 <count>` headers,
+"which scenario belongs to trust" is the **ordinal position in the flattened
+tree**, gated by the serializer's tag table -> not a fixed byte. My earlier
+`0x1117`/`0x117b` guesses were low bytes of unrelated BE-u32 stats.
+
+**Remaining link:** which ordinal trust flag feeds a specific actor's trust requires either
+(a) decoding the serializer tag table fully, or (b) one controlled experiment:
+clear a single scenario with a *known* actor, snapshot, and read which
+ordinal flips. The static work has now localized exactly where to look.
+
+
+## 11. Serializer internals — type dispatch, record writer, keyed hashmap (session 5)
+
+The serializer is a C++ reflection/serialization engine reached through the
+194-entry **lazy-thunk dispatch array at 0x2d00a8**. Each thunk `k` is
+`r12 = *(0x2d0000 + 0xa8 + 4k)` then `bctr` (a virtual call). 0x2d00a8 is an
+array of `{fnptr, toc}` pairs whose targets (`0x1feec4…`) are tiny field
+accessors — this table is the **type-descriptor/vtable registry**, not the writer.
+
+### 11.1 The type-switch writer (func 0xef4e4) — THE TAG TABLE
+`0xef4e4` is a giant `switch (type_id)` (on r30). Binary-search style compares
+(`cmpwi r30,N ; beq handler`) over type ids roughly `-0xa … 0x100`. Extracted
+cases (handler 0x…):
+
+```
+type 0x00 -> 0xf2774   type 0x01 -> 0xef8f0   type 0x37 -> 0xf0a58
+type 0x38 -> 0xf1710   type 0x39 -> 0xf0eb0   type 0x3a -> 0xf10f4
+type 0x3b -> 0xf1364   type 0x40 -> 0xf1a88   type 0x85 -> 0xf25e8
+type 0x87 -> 0xefa70   type 0x94 -> 0xf2350   type 0x95 -> 0xf26a4
+type 0x96 -> 0xf1710   type 0x9a -> 0xf0fe0   type 0x9b -> 0xf1710
+type 0xa3 -> 0xf0d50   (+ more; scan window was 0x600B — widen to capture all)
+```
+
+`type 0x01 -> 0xef8f0` is the **main recursive serializer** (calls the most
+sub-routines, incl. `0xf51ac` which recurses back into this dispatcher). Handler
+clusters call three write primitives:
+* `0xd8a44` = array index accessor `if(i<len) return data[i]`
+* `0xd8f44` = **record/field writer** (writes a C++ record struct)
+* `0xd8dbc` = **keyed map lookup** (hashmap get)
+
+### 11.2 The 0xff flag lives in a C++ record struct (func 0xd8f44)
+`0xd8f44` builds a per-field record; the offsets and constant writes are:
+```
+0x00  = value (stw r7)        0x04 = r28 (state)     0x08 = -1
+0x0c  = 0                     0x10 = stb 0xff   <-- THE cleared/true marker
+0x14  = stw 0x3f80 (float 1.0) 0x18 = stw 0x3f80 (float 1.0)
+```
+So the on-disk `0xff` bytes are **struct field +0x10 = "present/true"** of a
+record, and the `01 <count>` bytes are integer fields. This matches §10.4.
+
+### 11.3 Fields are stored in a NAME-KEYED hashmap (func 0xd8dbc)
+`0xd8dbc`: `keys = *(obj+0x18); if (idx < keys[idx])` then `hashmap_get(0x86da4,
+container, key)`. Combined with §9.1/§10.3 the save model is:
+`root -> {scenario, character, unlock, skil, cas_top, cast_top, obi*} -> hashmap`
+keyed by the vocabulary strings at 0x23D560, each value a record from §11.2.
+
+### 11.4 Next step to finish the trust link
+The per-actor trust the 名鑑 shows is the **aggregation over the `scenario`
+map** gated by each record's `+0x10` flag (§11.2). To name *which* record ->
+*which* actor, decode the scenario map's key list (the string table feeding
+`0xd8dbc`'s hashmap) — i.e. enumerate the scenario keys at 0x23D560 that map
+into the record array, then the k-th cleared record = k-th scenario. That is a
+pure table read (no gameplay). Fallback remains the controlled single-clear diff.
+
+
+
+
+
